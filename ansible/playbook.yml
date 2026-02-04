@@ -96,6 +96,45 @@
       changed_when: true
 
     # ===================
+    # GLPI SETUP
+    # ===================
+    - name: Wait for GLPI container to be ready
+      shell: |
+        docker exec $(docker ps -q -f name=glpi_glpi) test -f /var/www/glpi/bin/console
+      register: glpi_ready
+      until: glpi_ready.rc == 0
+      retries: 30
+      delay: 3
+      changed_when: false
+
+    - name: Check if GLPI is already installed
+      shell: |
+        docker exec $(docker ps -q -f name=glpi_glpi) test -f /var/glpi/config/config_db.php
+      register: glpi_installed
+      ignore_errors: true
+      changed_when: false
+
+    - name: Install GLPI via CLI
+      shell: |
+        docker exec $(docker ps -q -f name=glpi_glpi) php /var/www/glpi/bin/console db:install \
+          --db-host=mariadb \
+          --db-port=3306 \
+          --db-name={{ glpi_db_name }} \
+          --db-user={{ glpi_db_user }} \
+          --db-password='{{ glpi_db_password }}' \
+          --default-language=fr_FR \
+          --no-interaction \
+          --force
+      when: glpi_installed.rc != 0
+      register: glpi_install_result
+
+    - name: Remove GLPI install directory for security
+      shell: |
+        docker exec $(docker ps -q -f name=glpi_glpi) rm -rf /var/www/glpi/install
+      ignore_errors: true
+      changed_when: true
+
+    # ===================
     # FINAL STATUS
     # ===================
     - name: Display deployment status
@@ -105,15 +144,13 @@
           SwarmGLPI déployé avec succès !
           ============================================
 
-          Accès : https://{{ glpi_domain }}/install/install.php
-
-          Base de données :
-          - Hôte : mariadb
-          - Base : {{ glpi_db_name }}
-          - Utilisateur : {{ glpi_db_user }}
-          - Mot de passe : {{ glpi_db_password }}
+          Accès : https://{{ glpi_domain }}
 
           Identifiants GLPI par défaut :
           - glpi / glpi (super-admin)
           - tech / tech (technicien)
+          - normal / normal (utilisateur)
+          - post-only / postonly (post-only)
+
+          IMPORTANT : Changez les mots de passe par défaut !
           ============================================
