@@ -1,5 +1,5 @@
 ---
-- name: SwarmGLPI Configuration
+- name: SwarmGLPI Full Deployment
   hosts: localhost
   gather_facts: true
 
@@ -7,7 +7,42 @@
     - vars/secrets.yml
 
   tasks:
-    - name: Ensure required directories exist
+    # ===================
+    # TERRAFORM
+    # ===================
+    - name: Initialize Terraform
+      command: terraform init
+      args:
+        chdir: "{{ playbook_dir }}/../terraform"
+      changed_when: false
+
+    - name: Apply Terraform infrastructure
+      command: terraform apply -auto-approve
+      args:
+        chdir: "{{ playbook_dir }}/../terraform"
+      register: terraform_result
+      changed_when: "'Apply complete' in terraform_result.stdout"
+
+    # ===================
+    # DOCKER STACK
+    # ===================
+    - name: Deploy Docker Swarm stack
+      command: docker stack deploy -c {{ playbook_dir }}/../docker-stack.yml glpi
+      register: stack_result
+      changed_when: "'Creating' in stack_result.stdout"
+
+    - name: Wait for services to start
+      shell: docker service ls
+      register: services_status
+      until: "'0/1' not in services_status.stdout and '0/3' not in services_status.stdout"
+      retries: 30
+      delay: 3
+      changed_when: false
+
+    # ===================
+    # SSL CERTIFICATES
+    # ===================
+    - name: Ensure certificate directories exist
       file:
         path: "{{ item }}"
         state: directory
@@ -16,7 +51,7 @@
         - /tmp/glpi-setup
         - /tmp/glpi-setup/live/{{ glpi_domain }}
 
-    - name: Generate self-signed SSL certificate (for development)
+    - name: Generate self-signed SSL certificate
       command: >
         openssl req -x509 -nodes -days 365 -newkey rsa:2048
         -keyout /tmp/glpi-setup/live/{{ glpi_domain }}/privkey.pem
@@ -31,6 +66,9 @@
         tar -C /tmp/glpi-setup -cf - live | docker run --rm -i -v glpi_certs:/certs alpine tar -C /certs -xf -
       changed_when: true
 
+    # ===================
+    # NGINX CONFIG
+    # ===================
     - name: Copy nginx configuration to Docker volume
       shell: |
         cat {{ playbook_dir }}/../nginx/nginx.conf | docker run --rm -i -v glpi_nginx_conf:/conf alpine sh -c 'cat > /conf/default.conf'
@@ -40,6 +78,9 @@
       command: docker service update --force glpi_nginx
       changed_when: true
 
+    # ===================
+    # DATABASE
+    # ===================
     - name: Wait for MariaDB to be ready
       shell: |
         docker exec $(docker ps -q -f name=glpi_mariadb) mysqladmin ping -h localhost -u root --password='{{ glpi_db_root_password }}'
@@ -54,28 +95,25 @@
         docker exec $(docker ps -q -f name=glpi_mariadb) mysql -u root -p'{{ glpi_db_root_password }}' -e "ALTER USER '{{ glpi_db_user }}'@'%' IDENTIFIED BY '{{ glpi_db_password }}'; FLUSH PRIVILEGES;"
       changed_when: true
 
+    # ===================
+    # FINAL STATUS
+    # ===================
     - name: Display deployment status
       debug:
         msg: |
           ============================================
-          SwarmGLPI infrastructure ready!
+          SwarmGLPI déployé avec succès !
           ============================================
 
-          Complete GLPI setup at: https://{{ glpi_domain }}/install/install.php
+          Accès : https://{{ glpi_domain }}/install/install.php
 
-          Database connection details:
-          - Host: mariadb
-          - Database: {{ glpi_db_name }}
-          - User: {{ glpi_db_user }}
-          - Password: {{ glpi_db_password }}
+          Base de données :
+          - Hôte : mariadb
+          - Base : {{ glpi_db_name }}
+          - Utilisateur : {{ glpi_db_user }}
+          - Mot de passe : {{ glpi_db_password }}
 
-          Default GLPI logins (after install):
+          Identifiants GLPI par défaut :
           - glpi / glpi (super-admin)
-          - tech / tech (technician)
-
-          Services running:
-          - 3x Nginx reverse proxy (SSL)
-          - 1x GLPI application
-          - 1x MariaDB database
-          - 1x Certbot (for production SSL)
+          - tech / tech (technicien)
           ============================================

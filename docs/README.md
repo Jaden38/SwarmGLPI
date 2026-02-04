@@ -62,46 +62,28 @@ cp secrets.yml.example secrets.yml
 # Modifier secrets.yml avec vos mots de passe
 ```
 
-### 3. Créer les variables Terraform
-
 ```bash
-cat > terraform/terraform.tfvars <<EOF
+cat > ../terraform/terraform.tfvars <<EOF
 glpi_db_password      = "votre_mot_de_passe_securise"
 glpi_db_root_password = "votre_mot_de_passe_root_securise"
 domain                = "glpi.local"
 EOF
 ```
 
-### 4. Déployer l'infrastructure avec Terraform
-
-```bash
-cd terraform
-terraform init
-terraform apply
-cd ..
-```
-
-### 5. Déployer la stack Docker
-
-```bash
-docker stack deploy -c docker-stack.yml glpi
-```
-
-### 6. Attendre le démarrage des services
-
-```bash
-docker service ls
-# Attendre que tous les réplicas affichent X/X (ex: 3/3, 1/1)
-```
-
-### 7. Exécuter la configuration Ansible
+### 3. Déployer avec Ansible (une seule commande)
 
 ```bash
 cd ansible
 ansible-playbook -i inventory.yml playbook.yml
 ```
 
-### 8. Compléter l'installation GLPI
+Cette commande exécute automatiquement :
+- Terraform (réseaux, volumes, secrets)
+- Docker Stack (services GLPI, Nginx, MariaDB, Certbot)
+- Configuration SSL et Nginx
+- Configuration de la base de données
+
+### 4. Compléter l'installation GLPI
 
 Ajouter dans votre fichier hosts :
 ```
