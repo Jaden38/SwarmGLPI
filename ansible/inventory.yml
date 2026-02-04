@@ -1,0 +1,10 @@
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+  vars:
+    glpi_domain: "glpi.local"
+    glpi_db_host: "mariadb"
+    glpi_db_name: "glpi"
+    glpi_db_user: "glpi"
+    timezone: "Europe/Paris"

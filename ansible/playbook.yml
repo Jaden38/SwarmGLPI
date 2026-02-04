@@ -1,0 +1,81 @@
+---
+- name: SwarmGLPI Configuration
+  hosts: localhost
+  gather_facts: true
+
+  vars_files:
+    - vars/secrets.yml
+
+  tasks:
+    - name: Ensure required directories exist
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /tmp/glpi-setup
+        - /tmp/glpi-setup/live/{{ glpi_domain }}
+
+    - name: Generate self-signed SSL certificate (for development)
+      command: >
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048
+        -keyout /tmp/glpi-setup/live/{{ glpi_domain }}/privkey.pem
+        -out /tmp/glpi-setup/live/{{ glpi_domain }}/fullchain.pem
+        -subj "/CN={{ glpi_domain }}"
+      args:
+        creates: /tmp/glpi-setup/live/{{ glpi_domain }}/fullchain.pem
+      when: use_self_signed_cert | default(true)
+
+    - name: Copy certificates to Docker volume
+      shell: |
+        tar -C /tmp/glpi-setup -cf - live | docker run --rm -i -v glpi_certs:/certs alpine tar -C /certs -xf -
+      changed_when: true
+
+    - name: Copy nginx configuration to Docker volume
+      shell: |
+        cat {{ playbook_dir }}/../nginx/nginx.conf | docker run --rm -i -v glpi_nginx_conf:/conf alpine sh -c 'cat > /conf/default.conf'
+      changed_when: true
+
+    - name: Restart nginx to apply configuration
+      command: docker service update --force glpi_nginx
+      changed_when: true
+
+    - name: Wait for MariaDB to be ready
+      shell: |
+        docker exec $(docker ps -q -f name=glpi_mariadb) mysqladmin ping -h localhost -u root --password='{{ glpi_db_root_password }}'
+      register: db_ready
+      until: db_ready.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+
+    - name: Set GLPI database user password
+      shell: |
+        docker exec $(docker ps -q -f name=glpi_mariadb) mysql -u root -p'{{ glpi_db_root_password }}' -e "ALTER USER '{{ glpi_db_user }}'@'%' IDENTIFIED BY '{{ glpi_db_password }}'; FLUSH PRIVILEGES;"
+      changed_when: true
+
+    - name: Display deployment status
+      debug:
+        msg: |
+          ============================================
+          SwarmGLPI infrastructure ready!
+          ============================================
+
+          Complete GLPI setup at: https://{{ glpi_domain }}/install/install.php
+
+          Database connection details:
+          - Host: mariadb
+          - Database: {{ glpi_db_name }}
+          - User: {{ glpi_db_user }}
+          - Password: {{ glpi_db_password }}
+
+          Default GLPI logins (after install):
+          - glpi / glpi (super-admin)
+          - tech / tech (technician)
+
+          Services running:
+          - 3x Nginx reverse proxy (SSL)
+          - 1x GLPI application
+          - 1x MariaDB database
+          - 1x Certbot (for production SSL)
+          ============================================
